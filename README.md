@@ -1,4 +1,4 @@
-# Party Game Framework
+# Cinematic Bazaar
 
 A reusable multiplayer mini-game platform. Drop in a game definition and get rooms, lobbies, ready/start flow, 60Hz server-authoritative gameplay, and Cloudflare deployment — all for free.
 

@@ -1,4 +1,4 @@
-# Party Game Framework
+# Cinematic Bazaar
 
 Reusable multiplayer party game platform. Provides networking, lobby/room management, player name selection, input handling, and a modular UI shell. Games supply their own logic, state, and renderer.
 

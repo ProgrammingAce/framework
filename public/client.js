@@ -354,7 +354,7 @@
         ])
       ));
       this.root.appendChild(el("div", { className: "screen main-menu" }, [
-        el("h1", {}, ["Party Games"]),
+        el("h1", {}, ["Cinematic Bazaar"]),
         nameRow,
         gameList
       ]));
@@ -1808,7 +1808,7 @@
     return currentAngle + clamp(diff, -maxDelta, maxDelta);
   }
   function aiComputeInput(state, playerId) {
-    const player = state.players[playerId];
+    const player = state.players.find((p) => p.id === playerId);
     if (!player || !player.alive) {
       return { SHIELD_LEFT: false, SHIELD_RIGHT: false };
     }
@@ -1893,11 +1893,13 @@
       const inp = inputs.get(player.id) ?? {};
       const shieldSpeed = state.shieldSpeed / 20 * 0.09;
       if (player.alive) {
+        const isTopSide = CASTLE_POSITIONS[player.id].y < CANVAS_HEIGHT2 / 2;
+        const dir = isTopSide ? -1 : 1;
         if (inp.SHIELD_LEFT) {
-          player.shield.angle -= shieldSpeed;
+          player.shield.angle -= shieldSpeed * dir;
         }
         if (inp.SHIELD_RIGHT) {
-          player.shield.angle += shieldSpeed;
+          player.shield.angle += shieldSpeed * dir;
         }
         player.shield.angle = (player.shield.angle % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
       }

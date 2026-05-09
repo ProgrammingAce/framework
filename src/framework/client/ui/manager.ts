@@ -227,7 +227,7 @@ export class UIManager {
     ));
 
     this.root.appendChild(el('div', { className: 'screen main-menu' }, [
-      el('h1', {}, ['Party Games']),
+      el('h1', {}, ['Cinematic Bazaar']),
       nameRow,
       gameList,
     ]));
