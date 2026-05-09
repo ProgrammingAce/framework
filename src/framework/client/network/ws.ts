@@ -12,7 +12,13 @@ export class GameWebSocket {
 
   constructor(url?: string) {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    this.primaryUrl = url ?? `${proto}://${location.host}/ws`;
+    if (url) {
+      this.primaryUrl = url;
+    } else {
+      const meta = document.querySelector('meta[name="cinematic-bazaar-ws"]');
+      const metaUrl = meta?.getAttribute('content');
+      this.primaryUrl = metaUrl ?? `${proto}://${location.host}/ws`;
+    }
   }
 
   connect(): void {

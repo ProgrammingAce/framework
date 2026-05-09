@@ -28,7 +28,7 @@ await esbuild.build({
   bundle: true,
   platform: 'browser',
   target: 'es2022',
-  outfile: 'dist/worker.js',
+  outfile: 'dist/worker/worker.js',
   format: 'esm',
   conditions: ['worker', 'browser'],
 });

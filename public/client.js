@@ -25,7 +25,13 @@
     fallbackUsed = false;
     constructor(url) {
       const proto = location.protocol === "https:" ? "wss" : "ws";
-      this.primaryUrl = url ?? `${proto}://${location.host}/ws`;
+      if (url) {
+        this.primaryUrl = url;
+      } else {
+        const meta = document.querySelector('meta[name="cinematic-bazaar-ws"]');
+        const metaUrl = meta?.getAttribute("content");
+        this.primaryUrl = metaUrl ?? `${proto}://${location.host}/ws`;
+      }
     }
     connect() {
       const urlToTry = this.fallbackUsed ? "ws://localhost:3000/ws" : this.primaryUrl;
@@ -211,7 +217,7 @@
           this.errorMessage = msg.message;
           this.renderUI();
           break;
-        case "game_start":
+        case "game_start": {
           this.currentGame = gameRegistry.get(msg.gameId) ?? null;
           if (this.currentGame) {
             if (this.currentGame.canvasSize) {
@@ -223,11 +229,11 @@
             if (this.currentGame.renderer.init)
               this.currentGame.renderer.init(this.canvas);
           }
-          this.myPlayerId = msg.playerId;
           this.stopRoomListPolling();
           this.setScreen("game");
           this.startGameLoop();
           break;
+        }
         case "state":
           this.latestState = msg.state;
           if (this.currentGame?.clientHooks?.onEvent && msg.events?.length) {

@@ -4,8 +4,11 @@
   "private": true,
   "scripts": {
     "build": "tsc --noEmit && node build.mjs",
+    "start": "node dist/server.js",
     "dev": "tsx watch src/server/main.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node test-e2e.cjs",
+    "test:verbose": "node test-e2e.cjs --verbose"
   },
   "dependencies": {
     "ws": "^8.16.0"

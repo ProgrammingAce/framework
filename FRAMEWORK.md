@@ -60,14 +60,15 @@ src/
 └── worker/worker.ts          # Cloudflare Worker + Durable Object entry
 ```
 
-#### Two separate game registries
+#### Single game registry
 
-The renderer must never be imported on the server. As a result there are two registries:
+All game registration happens in one file: **`src/games/registry.ts`**. Each game definition is imported once and exported in the `GAMES` array. The three entry points each import from this single registry:
 
-- **Client** (`src/games/index.ts`): calls `registerClientGame(def)` — imported by the browser bundle. Includes the renderer.
-- **Server** (`src/server/main.ts`): calls `registerGame(def)` (re-exported from `framework/server/network/ws.ts`) — imported by the Node.js bundle. The renderer is tree-shaken out.
+- **Client** (`src/games/index.ts`): calls `registerClientGame(def)` for each game — imported by the browser bundle.
+- **Server** (`src/server/main.ts`): calls `registerGame(def)` for each game — imported by the Node.js bundle.
+- **Worker** (`src/worker/worker.ts`): calls `registerServerGame(def)` for each game — imported by the Cloudflare bundle.
 
-Each game definition file is imported **twice** at build time — once per bundle — but esbuild eliminates browser-only code from the server bundle automatically as long as renderer files are never `import`ed from server entry points.
+The renderer is never imported by server entry points, so esbuild tree-shakes browser-only code from server bundles automatically.
 
 ---
 
@@ -475,7 +476,7 @@ Use `PLAYER_COLORS[playerId]` from `src/framework/shared/constants.ts`.
 |--------|--------|--------|
 | Server | `dist/server.js` | Node.js 18 CJS |
 | Client | `public/client.js` | Browser IIFE |
-| Worker | `dist/worker.js` | Cloudflare Worker ESM |
+| Worker | `dist/worker/worker.js` | Cloudflare Worker ESM |
 
 The client bundle is written to `public/` (not `dist/`) so the dev HTTP server can serve it as a static asset. The server resolves the `public/` directory relative to `process.cwd()`, so **always run the server from the project root**:
 
@@ -831,25 +832,45 @@ PLAYER_COLORS: Record<PlayerId, string>
 
 ---
 
-## Cloudflare Compatibility
+## Cloudflare Deployment
 
-The Node.js dev server uses `setInterval` for the 60Hz game loop inside `GameRunner`. Cloudflare Durable Objects **do not support persistent `setInterval`** — the DO hibernates between WebSocket messages and timers are cleared.
+The Node.js dev server uses `setInterval` for the 60Hz game loop inside `GameRunner`. Cloudflare Durable Objects **fully support persistent `setInterval`** — the DO actor stays alive as long as it has active WebSocket connections, and timers fire normally within the actor's execution context.
 
-For production Cloudflare deployment, `GameRunner` must use the Durable Object alarm API instead:
+The same `GameRunner` from `framework/server/engine/runner.ts` runs identically on both the Node.js dev server and the Cloudflare Worker. No code changes are needed between environments.
 
-```typescript
-// In the Durable Object, replace setInterval with:
-await this.state.storage.setAlarm(Date.now() + TICK_MS);
+The `worker/worker.ts` entry defines a `GameServer` Durable Object class that hosts WebSocket connections and game runners. A Worker-level fetch handler routes all requests to the single `GameServer` instance via `idFromName('main')`. This ensures all players connect to the same persistent actor regardless of which Cloudflare edge node handles their request.
 
-// Implement the alarm handler:
-async alarm(): Promise<void> {
-  this.runTick();
-  if (!this.gameOver) {
-    await this.state.storage.setAlarm(Date.now() + TICK_MS);
-  }
-}
+```
+┌─────────────────────────────────────┐
+│  Cloudflare Pages (static)          │
+│  serves public/index.html + client.js│
+├─────────────────────────────────────┤
+│  Cloudflare Worker (HTTP handler)   │
+│  routes /ws → GameServer DO         │
+│  routes /keepalive → 200 OK         │
+├─────────────────────────────────────┤
+│  Durable Object: GameServer         │
+│  - persistent state                 │
+│  - WebSocket connections            │
+│  - GameRunner with setInterval      │
+│  - RoomManager                      │
+└─────────────────────────────────────┘
 ```
 
-This means the `worker/worker.ts` entry requires a separate `GameRunner`-equivalent that drives ticks via `alarm()` rather than `setInterval`. The Node.js `runner.ts` remains unchanged for local development.
-
 The rest of the framework (message routing, room management, game logic) is environment-agnostic and works identically in both runtimes.
+
+---
+
+## Testing
+
+E2E integration tests live in `test-e2e.cjs` and run against the deployed Worker by default:
+
+```bash
+npm test                # against deployed Worker
+npm run test:verbose    # logs every WebSocket message
+WORKER_URL=ws://localhost:3000/ws npm test  # against local server
+```
+
+10 tests covering: connection, room creation/listing/joining, ready/start flow, state broadcasting, player input, leave room, ping/pong, and error handling.
+
+Tests are zero-dependency (uses `ws` and `node:assert`), each creates its own WebSocket connections, and the `setupGame()` helper creates a ready-to-play game session so each test focuses on what it verifies.

@@ -137,9 +137,50 @@ wrangler deploy
 
 ---
 
+## Testing
+
+Run the E2E test suite against the deployed Worker:
+
+```bash
+npm test
+```
+
+10 integration tests covering the full game lifecycle:
+
+| Test | What it verifies |
+|------|-----------------|
+| connect & get connected ack | WebSocket upgrade and initial `connected` message |
+| create room & see it in room_list | Room creation and `request_room_list` polling |
+| join room & receive room_update | Two clients join the same room |
+| both players ready → game starts | Ready flow, game start, and state broadcasting |
+| state broadcasts continue | 60Hz server loop runs for at least 5 ticks |
+| player input accepted | Client `input` message is processed without error |
+| leave room updates reflect | Disconnection updates room state for remaining player |
+| ping / pong | Basic keepalive |
+| join non-existent room error | Error handling for bad codes |
+| join_room while already in room | Conflict detection |
+
+Verbose output (logs every message):
+
+```bash
+npm run test:verbose
+```
+
+Test against the local Node.js server:
+
+```bash
+npm run build
+node dist/server.js &
+WORKER_URL=ws://localhost:3000/ws npm test
+```
+
+Tests live in `test-e2e.cjs` — zero dependencies, uses `ws` and `node:assert`. Each test creates its own connections, drives the full protocol, and cleans up. The `setupGame()` helper creates a ready-to-play game session so each test focuses on what it wants to verify.
+
+---
+
 ## Further reading
 
-[**FRAMEWORK.md**](./FRAMEWORK.md) — complete specification covering:
+**FRAMEWORK.md** — complete specification covering:
 
 - All interface types (`GameDefinition`, `BaseGameState`, `BaseInput`, `TickResult`, …)
 - Network protocol and message reference

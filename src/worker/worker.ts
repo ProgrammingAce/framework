@@ -1,38 +1,7 @@
 /**
- * Cloudflare Worker — WebSocket proxy using Durable Objects.
- *
- * Each room runs inside a GameRoom Durable Object so state is colocated.
- * The Worker routes:
- *   /ws  → WebSocket upgrade → GameRoom DO
- *   *    → static assets from Pages (handled by Cloudflare Pages binding)
+ * Cloudflare Worker — WebSocket game server
+ * Uses a Durable Object for persistent game state (like warlords).
  */
-
-export interface Env {
-  GAME_ROOM: DurableObjectNamespace;
-  ASSETS: Fetcher; // Cloudflare Pages static asset binding
-}
-
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
-
-    if (url.pathname === '/ws') {
-      // Use a single global room coordinator DO
-      // In production you'd route by room code to a per-room DO
-      const id = env.GAME_ROOM.idFromName('coordinator');
-      const stub = env.GAME_ROOM.get(id);
-      return stub.fetch(request);
-    }
-
-    // All other requests → static assets (Cloudflare Pages)
-    return env.ASSETS.fetch(request);
-  },
-};
-
-// ---------------------------------------------------------------------------
-// Durable Object: GameRoom
-// Manages WebSocket connections and runs the game server logic.
-// ---------------------------------------------------------------------------
 
 import { registerServerGame, RoomManager, getGameDef } from '../framework/server/lobby/rooms';
 import { GameRunner } from '../framework/server/engine/runner';
@@ -40,153 +9,212 @@ import { GAMES } from '../games/registry';
 
 for (const game of GAMES) registerServerGame(game);
 
-type WSState = { ws: WebSocket; socketId: string; name: string; quit: boolean };
+// ── Types ──────────────────────────────────────────────────────────────────
 
-export class GameRoom {
-  private state: DurableObjectState;
-  private connections = new Map<string, WSState>();
+interface WSClient {
+  ws: WebSocket;
+  socketId: string;
+  name: string;
+  playerId: number;
+  quit: boolean;
+}
+
+// ── Durable Object — persistent singleton that keeps the game loop alive ───
+
+export class GameServer {
+  connections = new Map<string, WSClient>();
+  private roomMgr = new RoomManager();
+  activeRunners = new Map<string, GameRunner>();
   private nextId = 0;
 
-  private roomMgr = new RoomManager();
-  private runners = new Map<string, GameRunner>();
-
-  constructor(state: DurableObjectState) {
-    this.state = state;
-  }
+  constructor(private state: DurableObjectState) {}
 
   async fetch(request: Request): Promise<Response> {
-    if (request.headers.get('Upgrade') !== 'websocket') {
-      return new Response('Expected WebSocket', { status: 426 });
+    const url = new URL(request.url);
+
+    if (url.pathname === '/ws') {
+      if (request.headers.get('upgrade') !== 'websocket') {
+        return new Response('Expected WebSocket', { status: 426 });
+      }
+      const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
+      server.accept();
+      const socketId = String(this.nextId++);
+      const conn: WSClient = { ws: server, socketId, name: 'Player', playerId: -1, quit: false };
+      this.connections.set(socketId, conn);
+      server.send(JSON.stringify({ type: 'connected', playerId: 0 }));
+      this.handleSocket(server, socketId);
+      return new Response(null, { status: 101, webSocket: client });
     }
 
-    const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
-    this.handleSocket(server);
-    return new Response(null, { status: 101, webSocket: client });
+    if (url.pathname === '/keepalive') {
+      return new Response('ok', { status: 200 });
+    }
+
+    return new Response('Not Found', { status: 404 });
   }
 
-  private handleSocket(ws: WebSocket): void {
-    this.state.acceptWebSocket(ws);
-    const socketId = String(this.nextId++);
-    this.connections.set(socketId, { ws, socketId, name: 'Player', quit: false });
-
-    ws.send(JSON.stringify({ type: 'connected', playerId: 0 }));
-  }
-
-  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    const conn = [...this.connections.values()].find(c => c.ws === ws);
-    if (!conn) return;
-
-    let msg: Record<string, unknown>;
-    try { msg = JSON.parse(message.toString()); } catch { return; }
-
-    // Delegate to shared message handler
-    this.handleMessage(conn.socketId, msg, ws);
-  }
-
-  async webSocketClose(ws: WebSocket): Promise<void> {
-    const conn = [...this.connections.values()].find(c => c.ws === ws);
-    if (!conn) return;
-    conn.quit = true;
-
-    const left = this.roomMgr.leaveRoom(conn.socketId);
-    if (left) this.broadcast(left.room.code, { type: 'room_update', room: left.room });
-    this.connections.delete(conn.socketId);
-  }
+  // ── Broadcast to all clients in a room ─────────────────────────────────
 
   private broadcast(roomCode: string, msg: object): void {
     const json = JSON.stringify(msg);
     for (const conn of this.connections.values()) {
+      if (conn.quit) continue;
       const info = this.roomMgr.getRoomForSocket(conn.socketId);
-      if (info?.roomCode === roomCode && !conn.quit) {
+      if (info?.roomCode === roomCode) {
         try { conn.ws.send(json); } catch { /* ignore closed */ }
       }
     }
   }
 
-  private send(ws: WebSocket, msg: object): void {
-    try { ws.send(JSON.stringify(msg)); } catch { /* ignore */ }
+  // ── Send to a specific client ──────────────────────────────────────────
+
+  private send(conn: WSClient, msg: object): void {
+    try { conn.ws.send(JSON.stringify(msg)); } catch { /* ignore */ }
   }
 
-  private handleMessage(socketId: string, msg: Record<string, unknown>, ws: WebSocket): void {
-    const send = (m: object) => this.send(ws, m);
-    const conn = this.connections.get(socketId);
+  // ── WebSocket handler ──────────────────────────────────────────────────
 
-    switch (msg.type) {
-      case 'join': {
-        if (conn) conn.name = (msg.name as string) || 'Player';
-        break;
-      }
-      case 'rename': {
-        if (conn) conn.name = (msg.name as string) || conn.name;
-        this.roomMgr.rename(socketId, conn?.name ?? 'Player');
-        const info = this.roomMgr.getRoomForSocket(socketId);
-        if (info) this.broadcast(info.roomCode, { type: 'room_update', room: this.roomMgr.getRoom(info.roomCode) });
-        break;
-      }
-      case 'create_room': {
-        const name = conn?.name ?? 'Player';
-        const result = this.roomMgr.createRoom(socketId, msg.gameId as string, name);
-        if ('error' in result) { send({ type: 'error', message: result.error }); return; }
-        send({ type: 'connected', playerId: result.host });
-        send({ type: 'room_update', room: result });
-        break;
-      }
-      case 'join_room': {
-        const name = conn?.name ?? 'Player';
-        const result = this.roomMgr.joinRoom(socketId, msg.code as string, name);
-        if ('error' in result) { send({ type: 'error', message: result.error }); return; }
-        const joinedInfo = this.roomMgr.getRoomForSocket(socketId);
-        if (joinedInfo) send({ type: 'connected', playerId: joinedInfo.playerId });
-        this.broadcast(result.code, { type: 'room_update', room: result });
-        break;
-      }
-      case 'leave_room': {
-        const left = this.roomMgr.leaveRoom(socketId);
-        if (left) this.broadcast(left.room.code, { type: 'room_update', room: left.room });
-        break;
-      }
-      case 'ready': {
-        const room = this.roomMgr.toggleReady(socketId);
-        if (room) this.broadcast(room.code, { type: 'room_update', room });
-        break;
-      }
-      case 'update_settings': {
-        const updated = this.roomMgr.updateSettings(socketId, msg.settings as Record<string, unknown>);
-        if (updated) this.broadcast(updated.code, { type: 'room_update', room: updated });
-        break;
-      }
-      case 'start_game': {
-        const check = this.roomMgr.canStart(socketId);
-        if (!check.ok) { send({ type: 'error', message: check.error! }); return; }
-        const room = check.room!;
-        this.roomMgr.markStarted(room.code);
-        const def = getGameDef(room.gameId);
-        if (!def) { send({ type: 'error', message: 'Game not found' }); return; }
+  private handleSocket(ws: WebSocket, socketId: string): void {
+    ws.addEventListener('message', (event) => {
+      const conn = this.connections.get(socketId);
+      if (!conn) return;
 
-        const runner = new GameRunner(def, room, this.broadcast.bind(this), code => this.runners.delete(code));
-        this.runners.set(room.code, runner);
+      let msg: Record<string, unknown>;
+      try { msg = JSON.parse(event.data.toString()); } catch { return; }
 
-        // Notify each player of their slot before game_start so myPlayerId is correct
-        for (const c of this.connections.values()) {
-          const info = this.roomMgr.getRoomForSocket(c.socketId);
-          if (info?.roomCode === room.code && !c.quit) {
-            this.send(c.ws, { type: 'connected', playerId: info.playerId });
+      switch (msg.type) {
+        case 'join':
+          conn.name = (msg.name as string) || 'Player';
+          break;
+
+        case 'rename':
+          conn.name = (msg.name as string) || conn.name;
+          const info1 = this.roomMgr.getRoomForSocket(conn.socketId);
+          if (info1) {
+            this.broadcast(info1.roomCode, { type: 'room_update', room: this.roomMgr.getRoom(info1.roomCode)! });
           }
+          break;
+
+        case 'create_room': {
+          const result = this.roomMgr.createRoom(socketId, (msg.gameId as string) || '', conn.name);
+          if ('error' in result) { this.send(conn, { type: 'error', message: result.error }); return; }
+          this.send(conn, { type: 'connected', playerId: result.host });
+          this.send(conn, { type: 'room_update', room: result });
+          break;
         }
 
-        this.broadcast(room.code, { type: 'game_start', gameId: room.gameId, settings: room.gameSettings });
-        runner.start();
-        break;
+        case 'join_room': {
+          const code = (msg.code as string)?.toUpperCase();
+          const result = this.roomMgr.joinRoom(socketId, code, conn.name);
+          if ('error' in result) {
+            console.log('[DO] joinRoom error for socketId=' + socketId, code, ':', result.error);
+            this.send(conn, { type: 'error', message: result.error });
+            return;
+          }
+          const joinedInfo = this.roomMgr.getRoomForSocket(socketId);
+          if (joinedInfo) {
+            conn.playerId = joinedInfo.playerId;
+            this.send(conn, { type: 'connected', playerId: joinedInfo.playerId });
+          }
+          // Broadcast updated room state to all players in the room
+          this.broadcast(result.code, { type: 'room_update', room: result });
+          console.log('[DO] joinRoom success: socketId=' + socketId + ' code=' + code + ' players=' + result.players.map(p => p.name).join(','));
+          break;
+        }
+
+        case 'leave_room': {
+          const left = this.roomMgr.leaveRoom(socketId);
+          if (left) {
+            this.broadcast(left.room.code, { type: 'room_update', room: left.room });
+          }
+          break;
+        }
+
+        case 'request_room_list': {
+          this.send(conn, { type: 'room_list', rooms: this.roomMgr.listOpenRooms() });
+          break;
+        }
+
+        case 'ready': {
+          const toggled = this.roomMgr.toggleReady(socketId);
+          if (toggled) this.broadcast(toggled.code, { type: 'room_update', room: toggled });
+          break;
+        }
+
+        case 'update_settings': {
+          const updated = this.roomMgr.updateSettings(socketId, msg.settings as Record<string, unknown>);
+          if (updated) this.broadcast(updated.code, { type: 'room_update', room: updated });
+          break;
+        }
+
+        case 'start_game': {
+          const check = this.roomMgr.canStart(socketId);
+          if (!check.ok) { this.send(conn, { type: 'error', message: check.error! }); return; }
+          const room = check.room!;
+          this.roomMgr.markStarted(room.code);
+          const def = getGameDef(room.gameId);
+          if (!def) { this.send(conn, { type: 'error', message: 'Game not found' }); return; }
+
+          // Send each player their slot id
+          for (const c of this.connections.values()) {
+            const info = this.roomMgr.getRoomForSocket(c.socketId);
+            if (info?.roomCode === room.code && !c.quit) {
+              this.send(c, { type: 'connected', playerId: info.playerId });
+            }
+          }
+
+          this.broadcast(room.code, {
+            type: 'game_start',
+            gameId: room.gameId,
+            settings: room.gameSettings,
+          });
+
+          const runner = new GameRunner(def, room, (rc, m) => {
+            this.broadcast(rc, m);
+          }, (code) => {
+            this.activeRunners.delete(code);
+          });
+          this.activeRunners.set(room.code, runner);
+          runner.start();
+          console.log('[DO] Game started for room ' + room.code);
+          break;
+        }
+
+        case 'input': {
+          const info = this.roomMgr.getRoomForSocket(socketId);
+          if (!info) return;
+          const runner = this.activeRunners.get(info.roomCode);
+          if (!runner) return;
+          runner.receiveInput(info.playerId, msg.input as any);
+          break;
+        }
+
+        case 'ping':
+          this.send(conn, { type: 'pong' });
+          break;
       }
-      case 'input': {
-        const info = this.roomMgr.getRoomForSocket(socketId);
-        if (!info) return;
-        const runner = this.runners.get(info.roomCode);
-        if (!runner) return;
-        runner.receiveInput(info.playerId, msg.input as any);
-        break;
+    });
+
+    ws.addEventListener('close', () => {
+      const left = this.roomMgr.leaveRoom(socketId);
+      if (left) {
+        this.broadcast(left.room.code, { type: 'room_update', room: left.room });
       }
-      case 'ping': send({ type: 'pong' }); break;
-    }
+      this.connections.delete(socketId);
+    });
+
+    ws.addEventListener('error', () => {
+      this.connections.delete(socketId);
+    });
   }
 }
+
+// ── Worker entry point — routes all requests to the GameServer DO ──────────
+
+export default {
+  async fetch(request: Request, env: { GAME_SERVER: DurableObjectNamespace }, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<Response> {
+    const id = env.GAME_SERVER.idFromName('main');
+    const gameServer = env.GAME_SERVER.get(id);
+    return gameServer.fetch(request);
+  },
+};
