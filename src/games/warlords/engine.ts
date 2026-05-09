@@ -328,7 +328,7 @@ function rotateToward(currentAngle: number, targetAngle: number, maxDelta: numbe
 }
 
 function aiComputeInput(state: WarlordsState, playerId: PlayerId): WarlordsInput {
-  const player = state.players[playerId];
+  const player = state.players.find(p => p.id === playerId);
   if (!player || !player.alive) {
     return { SHIELD_LEFT: false, SHIELD_RIGHT: false };
   }
