@@ -5,7 +5,7 @@ import { actions, defaultActionMap } from './input';
 import { renderer } from './renderer';
 import type { PongState } from './state';
 import type { PongInput } from './input';
-import { WIN_SCORE } from './constants';
+import { WIN_SCORE, SPEED_INCREASE_PCT_DEFAULT } from './constants';
 
 const definition: GameDefinition<PongState, PongInput> = {
   id: 'pong',
@@ -33,6 +33,7 @@ const definition: GameDefinition<PongState, PongInput> = {
   `,
   settings: [
     { key: 'winScore', label: 'Points to win', type: 'range', default: 7, min: 3, max: 15, step: 1 },
+    { key: 'speedIncreasePct', label: 'Speed increase per hit (%)', type: 'range', default: SPEED_INCREASE_PCT_DEFAULT, min: 0, max: 30, step: 1 },
   ],
   aiAdapter: {
     computeInput(state: PongState, playerId: PlayerId): PongInput {

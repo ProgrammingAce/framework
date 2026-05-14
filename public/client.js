@@ -2387,7 +2387,7 @@
   var PADDLE_SPEED = 440;
   var BALL_SPEED_INITIAL = 320;
   var BALL_SPEED_MAX = 720;
-  var BALL_SPEED_INCREMENT = 18;
+  var SPEED_INCREASE_PCT_DEFAULT = 5;
   var WIN_SCORE = 7;
   var PADDLE_X = 40;
 
@@ -2397,6 +2397,7 @@
       tick: 0,
       phase: "playing",
       hitCount: 0,
+      speedIncreasePct: typeof config.settings.speedIncreasePct === "number" ? config.settings.speedIncreasePct : SPEED_INCREASE_PCT_DEFAULT,
       ball: {
         x: CANVAS_WIDTH / 2,
         y: CANVAS_HEIGHT / 2,
@@ -2452,7 +2453,7 @@
       if (next.ball.vx < 0 && next.ball.x - BALL_SIZE / 2 <= px + PADDLE_WIDTH / 2 && next.ball.x + BALL_SIZE / 2 >= px - PADDLE_WIDTH / 2 && next.ball.y + BALL_SIZE / 2 >= py - PADDLE_HEIGHT / 2 && next.ball.y - BALL_SIZE / 2 <= py + PADDLE_HEIGHT / 2) {
         next.ball.x = px + PADDLE_WIDTH / 2 + BALL_SIZE / 2;
         const rel = clamp((next.ball.y - py) / (PADDLE_HEIGHT / 2), -1, 1);
-        const speed = Math.min(speedOf(next.ball) + BALL_SPEED_INCREMENT, BALL_SPEED_MAX);
+        const speed = Math.min(speedOf(next.ball) * (1 + next.speedIncreasePct / 100), BALL_SPEED_MAX);
         next.ball.vx = speed * Math.cos(rel * 0.7);
         next.ball.vy = speed * Math.sin(rel * 0.7);
         next.hitCount++;
@@ -2466,7 +2467,7 @@
       if (next.ball.vx > 0 && next.ball.x + BALL_SIZE / 2 >= px - PADDLE_WIDTH / 2 && next.ball.x - BALL_SIZE / 2 <= px + PADDLE_WIDTH / 2 && next.ball.y + BALL_SIZE / 2 >= py - PADDLE_HEIGHT / 2 && next.ball.y - BALL_SIZE / 2 <= py + PADDLE_HEIGHT / 2) {
         next.ball.x = px - PADDLE_WIDTH / 2 - BALL_SIZE / 2;
         const rel = clamp((next.ball.y - py) / (PADDLE_HEIGHT / 2), -1, 1);
-        const speed = Math.min(speedOf(next.ball) + BALL_SPEED_INCREMENT, BALL_SPEED_MAX);
+        const speed = Math.min(speedOf(next.ball) * (1 + next.speedIncreasePct / 100), BALL_SPEED_MAX);
         next.ball.vx = -speed * Math.cos(rel * 0.7);
         next.ball.vy = speed * Math.sin(rel * 0.7);
         next.hitCount++;
@@ -2661,7 +2662,8 @@
     <p>Hit the ball with the edge of your paddle to add angle. The ball speeds up with each hit!</p>
   `,
     settings: [
-      { key: "winScore", label: "Points to win", type: "range", default: 7, min: 3, max: 15, step: 1 }
+      { key: "winScore", label: "Points to win", type: "range", default: 7, min: 3, max: 15, step: 1 },
+      { key: "speedIncreasePct", label: "Speed increase per hit (%)", type: "range", default: SPEED_INCREASE_PCT_DEFAULT, min: 0, max: 30, step: 1 }
     ],
     aiAdapter: {
       computeInput(state, playerId) {

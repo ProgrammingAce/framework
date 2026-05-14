@@ -1,6 +1,6 @@
 import type { BaseGameState, BasePlayer, GameConfig, PlayerColor } from '../../framework/shared/types';
 import { CANVAS_WIDTH, CANVAS_HEIGHT } from '../../framework/shared/constants';
-import { BALL_SPEED_INITIAL, PADDLE_X } from './constants';
+import { BALL_SPEED_INITIAL, PADDLE_X, SPEED_INCREASE_PCT_DEFAULT } from './constants';
 
 export interface PongPlayer extends BasePlayer {
   paddleY: number;
@@ -18,6 +18,7 @@ export interface PongState extends BaseGameState {
   players: PongPlayer[];
   ball: PongBall;
   hitCount: number;
+  speedIncreasePct: number;
 }
 
 export function createInitialState(config: GameConfig): PongState {
@@ -25,6 +26,9 @@ export function createInitialState(config: GameConfig): PongState {
     tick: 0,
     phase: 'playing',
     hitCount: 0,
+    speedIncreasePct: typeof config.settings.speedIncreasePct === 'number'
+      ? config.settings.speedIncreasePct
+      : SPEED_INCREASE_PCT_DEFAULT,
     ball: {
       x: CANVAS_WIDTH / 2,
       y: CANVAS_HEIGHT / 2,

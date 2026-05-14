@@ -5,7 +5,7 @@ import type { PongState, PongBall } from './state';
 import type { PongInput } from './input';
 import {
   PADDLE_WIDTH, PADDLE_HEIGHT, BALL_SIZE,
-  PADDLE_SPEED, BALL_SPEED_INITIAL, BALL_SPEED_MAX, BALL_SPEED_INCREMENT,
+  PADDLE_SPEED, BALL_SPEED_INITIAL, BALL_SPEED_MAX,
   WIN_SCORE, PADDLE_X,
 } from './constants';
 
@@ -60,7 +60,7 @@ export function tick(
     ) {
       next.ball.x = px + PADDLE_WIDTH / 2 + BALL_SIZE / 2;
       const rel = clamp((next.ball.y - py) / (PADDLE_HEIGHT / 2), -1, 1);
-      const speed = Math.min(speedOf(next.ball) + BALL_SPEED_INCREMENT, BALL_SPEED_MAX);
+      const speed = Math.min(speedOf(next.ball) * (1 + next.speedIncreasePct / 100), BALL_SPEED_MAX);
       next.ball.vx = speed * Math.cos(rel * 0.7);
       next.ball.vy = speed * Math.sin(rel * 0.7);
       next.hitCount++;
@@ -82,7 +82,7 @@ export function tick(
     ) {
       next.ball.x = px - PADDLE_WIDTH / 2 - BALL_SIZE / 2;
       const rel = clamp((next.ball.y - py) / (PADDLE_HEIGHT / 2), -1, 1);
-      const speed = Math.min(speedOf(next.ball) + BALL_SPEED_INCREMENT, BALL_SPEED_MAX);
+      const speed = Math.min(speedOf(next.ball) * (1 + next.speedIncreasePct / 100), BALL_SPEED_MAX);
       next.ball.vx = -speed * Math.cos(rel * 0.7);
       next.ball.vy = speed * Math.sin(rel * 0.7);
       next.hitCount++;

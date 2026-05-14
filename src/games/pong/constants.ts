@@ -4,6 +4,6 @@ export const BALL_SIZE = 10;
 export const PADDLE_SPEED = 440;
 export const BALL_SPEED_INITIAL = 320;
 export const BALL_SPEED_MAX = 720;
-export const BALL_SPEED_INCREMENT = 18;
+export const SPEED_INCREASE_PCT_DEFAULT = 5; // % speed gain per paddle hit
 export const WIN_SCORE = 7;
 export const PADDLE_X = 40;
